@@ -1,0 +1,70 @@
+# Local dev infra for the AI Autonomous Software Architect.
+# All services persist data to named volumes; nothing leaves your machine.
+
+services:
+  neo4j:
+    image: neo4j:5.26-community
+    container_name: architect-neo4j
+    environment:
+      NEO4J_AUTH: "${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-changeme-neo4j}"
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: "apoc.*"
+      NEO4J_server_memory_pagecache_size: "512M"
+      NEO4J_server_memory_heap_initial__size: "512M"
+      NEO4J_server_memory_heap_max__size: "1G"
+    ports:
+      - "7474:7474"   # browser UI
+      - "7687:7687"   # bolt
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: architect-postgres
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-architect}"
+      POSTGRES_USER: "${POSTGRES_USER:-architect}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-changeme-postgres}"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-architect} -d ${POSTGRES_DB:-architect}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  langfuse:
+    image: langfuse/langfuse:2
+    container_name: architect-langfuse
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-architect}:${POSTGRES_PASSWORD:-changeme-postgres}@postgres:5432/${POSTGRES_DB:-architect}?schema=langfuse"
+      NEXTAUTH_URL: "${LANGFUSE_HOST:-http://localhost:3001}"
+      NEXTAUTH_SECRET: "${LANGFUSE_SECRET:-changeme-langfuse-encryption-key-min-32-chars}"
+      SALT: "${LANGFUSE_SECRET:-changeme-langfuse-encryption-key-min-32-chars}"
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_INIT_ORG_ID: "architect-org"
+      LANGFUSE_INIT_PROJECT_ID: "architect"
+    ports:
+      - "3001:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/api/public/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+  postgres_data:
