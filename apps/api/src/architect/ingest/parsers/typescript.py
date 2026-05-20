@@ -24,8 +24,7 @@ _parser_tsx = get_parser("tsx")
 
 def parse_typescript(*, repo: str, rel_path: str, source: bytes) -> ParsedFile:
     parser = _parser_tsx if PurePosixPath(rel_path).suffix.lower() == ".tsx" else _parser_ts
-    src_str = source.decode("utf-8", errors="replace")
-    tree = parser.parse(src_str)
+    tree = parser.parse(source.decode("utf-8", errors="replace"))
     assert tree is not None
     module_qname = ts_module_qname(rel_path)
     pf = ParsedFile(
@@ -38,13 +37,13 @@ def parse_typescript(*, repo: str, rel_path: str, source: bytes) -> ParsedFile:
     )
     root = tree.root_node()
     for child in iter_children(root):
-        _walk(child, src_str, module_qname, pf, enclosing_func=None)
+        _walk(child, source, module_qname, pf, enclosing_func=None)
     return pf
 
 
 def _walk(
     node: Any,
-    source: str,
+    source: bytes,
     parent_qname: str,
     pf: ParsedFile,
     *,
@@ -69,7 +68,7 @@ def _walk(
             _walk(child, source, parent_qname, pf, enclosing_func=enclosing_func)
 
 
-def _collect_import(node: Any, source: str, pf: ParsedFile) -> None:
+def _collect_import(node: Any, source: bytes, pf: ParsedFile) -> None:
     src_node = node.child_by_field_name("source")
     if src_node is None:
         return
@@ -102,7 +101,7 @@ def _collect_import(node: Any, source: str, pf: ParsedFile) -> None:
     pf.imports.append(ParsedImport(source=raw, names=tuple(names), line=line_of(node)))
 
 
-def _collect_function(node: Any, source: str, parent_qname: str, pf: ParsedFile) -> None:
+def _collect_function(node: Any, source: bytes, parent_qname: str, pf: ParsedFile) -> None:
     name_node = node.child_by_field_name("name")
     if name_node is None:
         return
@@ -128,7 +127,7 @@ def _collect_function(node: Any, source: str, parent_qname: str, pf: ParsedFile)
             _walk(c, source, qname, pf, enclosing_func=qname)
 
 
-def _collect_class(node: Any, source: str, parent_qname: str, pf: ParsedFile) -> None:
+def _collect_class(node: Any, source: bytes, parent_qname: str, pf: ParsedFile) -> None:
     name_node = node.child_by_field_name("name")
     if name_node is None:
         return
@@ -155,7 +154,7 @@ def _collect_class(node: Any, source: str, parent_qname: str, pf: ParsedFile) ->
             _walk(member, source, qname, pf, enclosing_func=None)
 
 
-def _collect_method(node: Any, source: str, class_qname: str, pf: ParsedFile) -> None:
+def _collect_method(node: Any, source: bytes, class_qname: str, pf: ParsedFile) -> None:
     name_node = node.child_by_field_name("name")
     if name_node is None:
         return
@@ -182,7 +181,7 @@ def _collect_method(node: Any, source: str, class_qname: str, pf: ParsedFile) ->
 
 
 def _collect_named_function_expr(
-    node: Any, source: str, parent_qname: str, pf: ParsedFile
+    node: Any, source: bytes, parent_qname: str, pf: ParsedFile
 ) -> None:
     """Capture `const foo = () => {...}` and `const foo = function () {...}`."""
     for c in iter_children(node):
@@ -218,7 +217,7 @@ def _collect_named_function_expr(
                 _walk(cc, source, qname, pf, enclosing_func=qname)
 
 
-def _collect_call(node: Any, source: str, enclosing_func: str, pf: ParsedFile) -> None:
+def _collect_call(node: Any, source: bytes, enclosing_func: str, pf: ParsedFile) -> None:
     fn_node = node.child_by_field_name("function")
     if fn_node is None:
         return

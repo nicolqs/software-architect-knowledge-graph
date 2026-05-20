@@ -26,8 +26,8 @@ _parser = get_parser("python")
 
 
 def parse_python(*, repo: str, rel_path: str, source: bytes) -> ParsedFile:
-    src_str = source.decode("utf-8", errors="replace")
-    tree = _parser.parse(src_str)
+    # tree-sitter wants str, but byte_range() is in bytes — see _common.text().
+    tree = _parser.parse(source.decode("utf-8", errors="replace"))
     assert tree is not None  # parser.parse only returns None on edit-tree usage
     module_qname = python_module_qname(rel_path)
     pf = ParsedFile(
@@ -40,13 +40,13 @@ def parse_python(*, repo: str, rel_path: str, source: bytes) -> ParsedFile:
     )
     root = tree.root_node()
     for child in iter_children(root):
-        _walk(child, src_str, module_qname, pf, enclosing_func=None)
+        _walk(child, source, module_qname, pf, enclosing_func=None)
     return pf
 
 
 def _walk(
     node: Any,
-    source: str,
+    source: bytes,
     parent_qname: str,
     pf: ParsedFile,
     *,
@@ -68,7 +68,7 @@ def _walk(
             _walk(child, source, parent_qname, pf, enclosing_func=enclosing_func)
 
 
-def _collect_import(node: Any, source: str, pf: ParsedFile, *, is_from: bool) -> None:
+def _collect_import(node: Any, source: bytes, pf: ParsedFile, *, is_from: bool) -> None:
     if is_from:
         module_node = node.child_by_field_name("module_name")
         source_mod = text(module_node, source) if module_node is not None else ""
@@ -102,7 +102,7 @@ def _collect_import(node: Any, source: str, pf: ParsedFile, *, is_from: bool) ->
                 )
 
 
-def _collect_function(node: Any, source: str, parent_qname: str, pf: ParsedFile) -> None:
+def _collect_function(node: Any, source: bytes, parent_qname: str, pf: ParsedFile) -> None:
     name_node = node.child_by_field_name("name")
     if name_node is None:
         return
@@ -132,7 +132,7 @@ def _collect_function(node: Any, source: str, parent_qname: str, pf: ParsedFile)
             _walk(child, source, qname, pf, enclosing_func=qname)
 
 
-def _collect_class(node: Any, source: str, parent_qname: str, pf: ParsedFile) -> None:
+def _collect_class(node: Any, source: bytes, parent_qname: str, pf: ParsedFile) -> None:
     name_node = node.child_by_field_name("name")
     if name_node is None:
         return
@@ -155,7 +155,7 @@ def _collect_class(node: Any, source: str, parent_qname: str, pf: ParsedFile) ->
             _walk(child, source, qname, pf, enclosing_func=None)
 
 
-def _collect_call(node: Any, source: str, enclosing_func: str, pf: ParsedFile) -> None:
+def _collect_call(node: Any, source: bytes, enclosing_func: str, pf: ParsedFile) -> None:
     fn_node = node.child_by_field_name("function")
     if fn_node is None:
         return

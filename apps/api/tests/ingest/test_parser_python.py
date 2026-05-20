@@ -44,6 +44,33 @@ def test_extracts_imports() -> None:
     assert ".sibling" in sources
 
 
+MULTIBYTE = b'''
+# A docstring with an em-dash \xe2\x80\x94 forces multibyte offsets.
+
+def graph_client_init() -> None:
+    pass
+
+
+def caller() -> None:
+    graph_client_init()
+'''
+
+
+def test_multibyte_does_not_corrupt_names() -> None:
+    """Regression: tree-sitter byte_range is in UTF-8 bytes, not str chars.
+
+    Before the fix, slicing the decoded str with byte offsets silently
+    shifted identifier text after any multibyte character. We assert the
+    extracted def + call names are exact, not subtly shifted.
+    """
+    pf = parse_python(repo="demo", rel_path="pkg/mb.py", source=MULTIBYTE)
+    qnames = {d.qname for d in pf.definitions}
+    assert "pkg.mb.graph_client_init" in qnames
+    assert "pkg.mb.caller" in qnames
+    called = {c.called_name for c in pf.calls}
+    assert called == {"graph_client_init"}
+
+
 def test_extracts_calls() -> None:
     pf = parse_python(repo="demo", rel_path="pkg/mod.py", source=SAMPLE)
     callers = {c.caller_qname for c in pf.calls}

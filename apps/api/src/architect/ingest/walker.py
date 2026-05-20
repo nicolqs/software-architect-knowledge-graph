@@ -35,7 +35,7 @@ _ALWAYS_SKIP_DIRS = frozenset(
 _MAX_FILE_BYTES = 1_000_000  # skip files >1MB (vendored bundles, lockfiles, etc.)
 
 
-def _load_gitignore(root: Path) -> "pathspec.PathSpec[Any]":
+def _load_gitignore(root: Path) -> pathspec.PathSpec[Any]:
     gitignore = root / ".gitignore"
     if not gitignore.exists():
         return pathspec.PathSpec.from_lines("gitignore", [])
@@ -65,7 +65,7 @@ def walk_repo(root: Path, *, limit: int | None = None) -> Iterator[tuple[str, by
             return
 
 
-def _iter_files(root: Path, spec: "pathspec.PathSpec[Any]") -> Iterator[Path]:
+def _iter_files(root: Path, spec: pathspec.PathSpec[Any]) -> Iterator[Path]:
     stack: list[Path] = [root]
     while stack:
         current = stack.pop()

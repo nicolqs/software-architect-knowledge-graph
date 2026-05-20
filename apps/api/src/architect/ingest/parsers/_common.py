@@ -24,12 +24,17 @@ def loc(source: bytes) -> int:
     return source.count(b"\n") + (0 if source.endswith(b"\n") else 1)
 
 
-def text(node: Any, source: str) -> str:
-    """Slice the source string by the node's byte range. Under str-parse,
-    `byte_range` indexes the string in code points, which matches Python
-    string slicing exactly."""
+def text(node: Any, source: bytes) -> str:
+    """Slice the original bytes by the node's byte range, then decode.
+
+    Tree-sitter's `byte_range` is always in UTF-8 bytes — even when we hand
+    `parser.parse(str)` a Python string, the offsets index the encoded buffer,
+    not the Python code points. Slicing the decoded `str` directly is wrong
+    as soon as the file contains any multibyte character (em-dashes etc.)
+    and silently corrupts call-name and identifier extraction.
+    """
     rng = node.byte_range()
-    return source[rng.start : rng.end]
+    return source[rng.start : rng.end].decode("utf-8", errors="replace")
 
 
 def line_of(node: Any) -> int:
