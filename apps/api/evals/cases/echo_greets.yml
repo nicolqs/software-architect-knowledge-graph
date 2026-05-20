@@ -1,0 +1,9 @@
+name: echo-greets
+kind: agent
+agent: echo
+description: Echo agent confirms it received the user's message.
+input:
+  message: "Hello — please confirm you received this."
+assertions:
+  - kind: contains_any
+    of: ["received", "hello", "hi", "confirm", "echo"]

@@ -1,0 +1,4 @@
+name: echo-builds
+kind: smoke
+agent: echo
+description: Echo agent's LangGraph + checkpointer can be constructed without errors.

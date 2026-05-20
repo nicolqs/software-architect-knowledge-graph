@@ -8,6 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from architect import __version__
+from architect.agents.common.checkpointer import close_checkpointer, init_checkpointer
+from architect.api.agents import router as agents_router
 from architect.config import get_settings
 from architect.embeddings import store
 from architect.graph import client as graph_client
@@ -26,6 +28,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     async with pool.connection() as conn:
         applied = await run_migrations(conn)
     await graph_schema.apply()
+    await init_checkpointer(settings)
     log.info(
         "startup",
         neo4j=settings.neo4j_uri,
@@ -35,6 +38,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        await close_checkpointer()
         await graph_client.close_driver()
         await store.close_pool()
         log.info("shutdown")
@@ -54,6 +58,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.include_router(agents_router)
 
     class Health(BaseModel):
         status: Literal["ok", "degraded"]
