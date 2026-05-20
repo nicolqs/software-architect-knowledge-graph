@@ -13,8 +13,8 @@ services:
       NEO4J_server_memory_heap_initial__size: "512M"
       NEO4J_server_memory_heap_max__size: "1G"
     ports:
-      - "7474:7474"   # browser UI
-      - "7687:7687"   # bolt
+      - "${NEO4J_HTTP_PORT:-7474}:7474"   # browser UI
+      - "${NEO4J_BOLT_PORT:-7687}:7687"   # bolt
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs
@@ -32,7 +32,7 @@ services:
       POSTGRES_USER: "${POSTGRES_USER:-architect}"
       POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-changeme-postgres}"
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -57,7 +57,7 @@ services:
       LANGFUSE_INIT_ORG_ID: "architect-org"
       LANGFUSE_INIT_PROJECT_ID: "architect"
     ports:
-      - "3001:3000"
+      - "${LANGFUSE_PORT:-3001}:3000"
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/api/public/health || exit 1"]
       interval: 10s

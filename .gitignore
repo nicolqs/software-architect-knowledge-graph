@@ -34,6 +34,7 @@ node_modules/
 # Build outputs
 apps/web/dist/
 apps/api/dist/
+*.tsbuildinfo
 
 # IDE
 .vscode/
