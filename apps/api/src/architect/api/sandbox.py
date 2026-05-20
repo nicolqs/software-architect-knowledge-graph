@@ -18,15 +18,24 @@ router = APIRouter(prefix="/sandbox", tags=["sandbox"])
 
 
 class SandboxRunRequest(BaseModel):
-    image: str = Field(..., description="One of the allow-listed images (see sandbox.runner).")
-    script: str = Field(..., description="Script body to execute.", min_length=1, max_length=200_000)
+    """Request payload for /sandbox/run.
+
+    NOTE: this endpoint executes (heavily sandboxed) code in a container.
+    It must be behind auth before being exposed beyond localhost. v1
+    assumes a trusted caller; the runner's `_validate_request` is the
+    last-line defence (image allow-list, argv bounds, resource format).
+    """
+
+    image: str = Field(..., max_length=200, description="One of the allow-listed images.")
+    script: str = Field(..., min_length=1, max_length=200_000)
     interpreter: list[str] | None = Field(
         None,
+        max_length=8,
         description="Argv for the interpreter. Default: ['sh']. Use ['python'] for Python, etc.",
     )
     timeout_s: int = Field(60, ge=1, le=600)
-    memory: str = Field("512m")
-    cpus: str = Field("1")
+    memory: str = Field("512m", pattern=r"^\d+(\.\d+)?[kmgtKMGT]?$")
+    cpus: str = Field("1", pattern=r"^\d+(\.\d+)?[kmgtKMGT]?$")
 
 
 class SandboxRunResponse(BaseModel):

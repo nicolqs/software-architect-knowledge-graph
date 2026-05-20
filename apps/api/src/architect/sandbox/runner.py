@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
+import uuid
 from dataclasses import dataclass
 
 import structlog
@@ -72,6 +74,12 @@ class SandboxResult:
     timed_out: bool
 
 
+_MAX_INTERPRETER_ARGS = 8
+_MAX_INTERPRETER_ARG_LEN = 200
+# Docker accepts e.g. "512m", "2g", "1024"; refuse anything else.
+_RESOURCE_RE = re.compile(r"^\d+(\.\d+)?[kmgtKMGT]?$")
+
+
 def _validate_request(req: SandboxRequest) -> None:
     if req.image not in _ALLOWED_IMAGES:
         raise SandboxError(
@@ -82,6 +90,20 @@ def _validate_request(req: SandboxRequest) -> None:
         raise SandboxError("timeout_s must be between 1 and 600")
     if len(req.script) > 200_000:
         raise SandboxError("script must be <= 200kB")
+    if req.interpreter is not None:
+        if len(req.interpreter) > _MAX_INTERPRETER_ARGS:
+            raise SandboxError(
+                f"interpreter accepts at most {_MAX_INTERPRETER_ARGS} args; got {len(req.interpreter)}"
+            )
+        for arg in req.interpreter:
+            if not isinstance(arg, str) or len(arg) > _MAX_INTERPRETER_ARG_LEN:
+                raise SandboxError(
+                    f"interpreter arg must be a string ≤{_MAX_INTERPRETER_ARG_LEN} chars"
+                )
+    if not _RESOURCE_RE.match(req.memory):
+        raise SandboxError(f"memory must be like '512m' or '2g'; got {req.memory!r}")
+    if not _RESOURCE_RE.match(req.cpus):
+        raise SandboxError(f"cpus must be a number like '1' or '0.5'; got {req.cpus!r}")
 
 
 def _interpreter_for(req: SandboxRequest) -> list[str]:
@@ -97,17 +119,22 @@ def _interpreter_for(req: SandboxRequest) -> list[str]:
 async def run(req: SandboxRequest) -> SandboxResult:
     """Run a script inside a hardened ephemeral container.
 
-    The script body is piped via stdin to the interpreter, so we don't
-    need to bind-mount a host directory (which would hit uid-mismatch
-    permission issues under rootless containers).
+    The script body is piped via stdin to the interpreter — no host bind
+    mount needed (avoids uid-mismatch under rootless containers).
+
+    On timeout we explicitly `docker kill <name>` rather than relying on
+    Docker's broken-`-i`-connection auto-cleanup, which is timing-sensitive
+    and can leave a container running for seconds after the deadline.
     """
     _validate_request(req)
     interpreter = _interpreter_for(req)
+    container_name = f"architect-sbx-{uuid.uuid4().hex[:12]}"
     cmd = [
         "docker",
         "run",
         "--rm",
         "-i",                       # keep stdin open so we can pipe the script
+        "--name", container_name,
         "--network=none",
         "--read-only",
         "--tmpfs", "/tmp:rw,size=64m",
@@ -137,9 +164,11 @@ async def run(req: SandboxRequest) -> SandboxResult:
         )
     except TimeoutError:
         timed_out = True
+        # Kill the container itself, not just the docker CLI. The CLI might
+        # auto-clean, but explicit kill closes the race window.
+        await _docker_kill(container_name)
         with contextlib.suppress(ProcessLookupError):
             proc.kill()
-        # Drain whatever buffered output exists.
         try:
             stdout_b, stderr_b = await proc.communicate()
         except (BrokenPipeError, OSError):
@@ -153,6 +182,19 @@ async def run(req: SandboxRequest) -> SandboxResult:
         duration_s=round(duration, 3),
         timed_out=timed_out,
     )
+
+
+async def _docker_kill(container_name: str) -> None:
+    """Best-effort `docker kill <name>`. Swallows all errors — the container
+    may already be gone (the CLI auto-cleaned), in which case kill exits 1
+    and that's fine."""
+    with contextlib.suppress(Exception):
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "kill", container_name,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await asyncio.wait_for(proc.communicate(), timeout=5)
 
 
 async def docker_available() -> bool:

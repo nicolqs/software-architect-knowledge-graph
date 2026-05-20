@@ -79,18 +79,35 @@ async def find_dead_code(repo: str, limit: int = 100) -> list[RefactorItem]:
         )
         rows = await result.data()
 
-        # Names that have callers somewhere — used by the polymorphic filter.
+        # Polymorphic-dispatch filter: only counts METHOD names of classes
+        # that have callers somewhere. Scoping to methods avoids hiding real
+        # dead module-level functions just because some unrelated module
+        # happens to share a common name (`run`, `validate`, `submit`).
         poly_result = await s.run(
             """
-            MATCH (fn:Function {repo: $repo})
+            MATCH (:Class {repo: $repo})-[:CONTAINS]->(fn:Function {repo: $repo})
             WHERE ()-[:CALLS]->(fn)
             RETURN collect(DISTINCT fn.name) AS names
             """,
             repo=repo,
         )
         poly_row = await poly_result.single()
-        names_with_callers: set[str] = (
+        method_names_with_callers: set[str] = (
             set(poly_row["names"]) if poly_row is not None else set()
+        )
+
+        # And we need to know which dead rows are themselves methods, since
+        # the filter only applies to method-on-method collisions.
+        methods_result = await s.run(
+            """
+            MATCH (:Class {repo: $repo})-[:CONTAINS]->(fn:Function {repo: $repo})
+            RETURN collect(DISTINCT fn.qname) AS qnames
+            """,
+            repo=repo,
+        )
+        methods_row = await methods_result.single()
+        method_qnames: set[str] = (
+            set(methods_row["qnames"]) if methods_row is not None else set()
         )
 
     items: list[RefactorItem] = []
@@ -99,9 +116,13 @@ async def find_dead_code(repo: str, limit: int = 100) -> list[RefactorItem]:
             continue
         if _is_framework_invoked(r):
             continue
-        if r["name"] in names_with_callers:
-            # Polymorphic / Protocol impl — another function with the same
-            # name has callers; we can't statically tell which impl runs.
+        if (
+            r["qname"] in method_qnames
+            and r["name"] in method_names_with_callers
+        ):
+            # Polymorphic / Protocol impl: this row is itself a method, and
+            # another class's method with the same name has callers — we
+            # can't statically tell which impl runs.
             continue
         items.append(
             RefactorItem(
@@ -127,11 +148,17 @@ def _is_framework_invoked(row: dict[str, Any]) -> bool:
 
     Conservative — better to under-report dead code than nudge users to
     delete working route handlers and component functions.
+
+    KNOWN LIMITATION (v1): the FastAPI rule below assumes any Python
+    function under a path containing `/api/` is a route handler. True for
+    this repo's layout, wrong for repos where `/api/` is a generic
+    helpers module. The proper fix is decorator extraction in the parser
+    (tag functions decorated by `@router.*`), landing in v2.
     """
     path = row.get("file_path") or ""
     qname = row["qname"]
     name = row["name"]
-    # FastAPI route handler files.
+    # FastAPI route handler files — see KNOWN LIMITATION in the docstring.
     if "/api/" in path and path.endswith(".py"):
         return True
     # LangGraph node closures inside `build_*_graph` builders.
@@ -192,11 +219,10 @@ async def find_high_coupling(repo: str, limit: int = 20) -> list[RefactorItem]:
                 qname=r["qname"],
                 title=f"High coupling: {r['qname']}",
                 rationale=(
-                    f"Module {r['qname']} has fanin={r['fanin']} and {r['files_in_module']} "
-                    "internal files (degree {degree}). Refactors here ripple widely; split "
-                    "the module or stabilize the public API before touching it.".format(
-                        degree=r["degree"]
-                    )
+                    f"Module {r['qname']} has fanin={r['fanin']} and "
+                    f"{r['files_in_module']} internal files (degree {r['degree']}). "
+                    "Refactors here ripple widely; split the module or stabilize "
+                    "the public API before touching it."
                 ),
                 risk=risk,
                 blast_radius=int(r["fanin"]),
