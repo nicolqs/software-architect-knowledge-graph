@@ -28,6 +28,8 @@ _CONSTRAINTS: tuple[str, ...] = (
     # Functions / Classes keyed by (repo, qname)
     "CREATE CONSTRAINT function_qname_unique IF NOT EXISTS FOR (fn:Function) REQUIRE (fn.repo, fn.qname) IS UNIQUE",
     "CREATE CONSTRAINT class_qname_unique IF NOT EXISTS FOR (c:Class) REQUIRE (c.repo, c.qname) IS UNIQUE",
+    # External callables (unresolved imports, stdlib functions). One node per qname.
+    "CREATE CONSTRAINT external_qname_unique IF NOT EXISTS FOR (e:External) REQUIRE (e.repo, e.qname) IS UNIQUE",
 )
 
 _INDEXES: tuple[str, ...] = (

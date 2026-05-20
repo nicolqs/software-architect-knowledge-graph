@@ -108,12 +108,17 @@ async def callers_of(
     min_confidence: float = 0.5,
     limit: int = 50,
 ) -> list[CallEdge]:
-    """Functions that call `qname` (direct callers only — 1 hop)."""
+    """Functions that call `qname` directly (1 hop).
+
+    Target can be a Function (regular call) or Class (constructor call) —
+    both kinds of CALLS edges are surfaced.
+    """
     async with graph_client.session() as s:
         result = await s.run(
             """
-            MATCH (caller:Function {repo: $repo})-[r:CALLS]->(target:Function {repo: $repo, qname: $qname})
-            WHERE r.confidence >= $min_confidence
+            MATCH (caller:Function {repo: $repo})-[r:CALLS]->(target {repo: $repo, qname: $qname})
+            WHERE (target:Function OR target:Class)
+              AND r.confidence >= $min_confidence
             RETURN caller.qname AS caller_qname,
                    target.qname AS target_qname,
                    r.confidence  AS confidence

@@ -172,6 +172,7 @@ async def write_edges(repo: str, resolved: ResolvedRepo) -> tuple[int, int]:
             "target": i.target_qname,
             "confidence": i.confidence,
             "line": i.line,
+            "name": i.imported_name,
         }
         for i in resolved.imports
     ]
@@ -179,11 +180,21 @@ async def write_edges(repo: str, resolved: ResolvedRepo) -> tuple[int, int]:
     calls_written = 0
     for batch in _batched(call_params, _BATCH_SIZE):
         async with graph_client.session() as s:
+            # If a target qname already exists as Function OR Class, link to that
+            # node (constructor calls go to the Class; method calls to the
+            # Function). Otherwise create an :External placeholder. Avoids
+            # producing duplicate Function+Class nodes for the same qname.
             await s.run(
                 """
                 UNWIND $rows AS r
                 MATCH (caller:Function {repo: $repo, qname: r.caller})
-                MERGE (target:Function {repo: $repo, qname: r.target})
+                OPTIONAL MATCH (existing {repo: $repo, qname: r.target})
+                WHERE existing:Function OR existing:Class
+                WITH caller, r, existing,
+                     CASE WHEN existing IS NULL THEN 'External'
+                          ELSE labels(existing)[0] END AS target_label
+                CALL apoc.merge.node([target_label], {repo: $repo, qname: r.target})
+                YIELD node AS target
                 MERGE (caller)-[c:CALLS]->(target)
                 SET c.confidence = r.confidence,
                     c.last_line = r.line,
@@ -203,7 +214,9 @@ async def write_edges(repo: str, resolved: ResolvedRepo) -> tuple[int, int]:
                 MATCH (file:File {repo: $repo, path: r.file_path})
                 MERGE (target:Module {repo: $repo, qname: r.target})
                 MERGE (file)-[i:IMPORTS]->(target)
-                SET i.confidence = r.confidence, i.line = r.line
+                SET i.confidence = r.confidence,
+                    i.line = r.line,
+                    i.name = r.name
                 """,
                 repo=repo,
                 rows=batch,

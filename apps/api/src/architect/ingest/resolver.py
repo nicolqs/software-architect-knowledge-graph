@@ -26,10 +26,18 @@ class ResolvedCall:
 
 @dataclass(slots=True)
 class ResolvedImport:
+    """An IMPORTS edge from a file to a module.
+
+    `target_qname` is always a module qname (so the writer creates a Module
+    node, never colliding with Function/Class qnames). When the import named
+    a specific symbol that we could resolve, `imported_name` preserves which.
+    """
+
     file_path: str
     target_qname: str
     confidence: float
     line: int
+    imported_name: str | None = None  # the specific symbol, if any
 
 
 @dataclass(slots=True)
@@ -81,23 +89,26 @@ def resolve(files: list[ParsedFile]) -> ResolvedRepo:
             for name in imp.names or ():
                 import_target = _join_qname(pf.language, resolved_module_qname, name)
                 if import_target in by_qname:
+                    # Cache for the per-file call resolver. The IMPORTS edge
+                    # itself still points at the *module* (see ResolvedImport).
                     imported[name] = import_target
                     out.imports.append(
                         ResolvedImport(
                             file_path=pf.path,
-                            target_qname=import_target,
+                            target_qname=resolved_module_qname,
                             confidence=0.7,
                             line=imp.line,
+                            imported_name=name,
                         )
                     )
                 else:
-                    # Module resolved but symbol didn't — still useful intel.
                     out.imports.append(
                         ResolvedImport(
                             file_path=pf.path,
-                            target_qname=f"{resolved_module_qname}",
+                            target_qname=resolved_module_qname,
                             confidence=0.5,
                             line=imp.line,
+                            imported_name=name,
                         )
                     )
 
