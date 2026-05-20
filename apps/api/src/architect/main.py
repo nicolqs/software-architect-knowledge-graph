@@ -15,6 +15,7 @@ from architect.api.decisions import router as decisions_router
 from architect.api.graph import router as graph_routes_router
 from architect.api.refactor import router as refactor_router
 from architect.api.reviewer import router as reviewer_router
+from architect.api.sandbox import router as sandbox_router
 from architect.api.tickets import router as tickets_router
 from architect.config import get_settings
 from architect.embeddings import store
@@ -71,6 +72,7 @@ def create_app() -> FastAPI:
     app.include_router(refactor_router)
     app.include_router(graph_routes_router)
     app.include_router(decisions_router)
+    app.include_router(sandbox_router)
 
     class Health(BaseModel):
         status: Literal["ok", "degraded"]
