@@ -1,0 +1,6 @@
+name: refactor-runs-on-self
+kind: smoke
+agent: refactor
+description: Refactor planner runs its analyses against 'architect-self' without errors.
+input:
+  repo: architect-self

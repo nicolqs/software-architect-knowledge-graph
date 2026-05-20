@@ -1,0 +1,9 @@
+name: reviewer-runs-on-self
+kind: smoke
+agent: reviewer
+description: PR reviewer runs its graph checks against the ingested 'architect-self' repo without errors.
+input:
+  repo: architect-self
+  changed_files:
+    - apps/api/src/architect/ingest/writer.py
+    - apps/api/src/architect/ingest/resolver.py

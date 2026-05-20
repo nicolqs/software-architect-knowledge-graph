@@ -31,14 +31,127 @@ The smoke-test agent that verifies the framework wiring.
 - `503` — `ANTHROPIC_API_KEY` not configured.
 - `429` — daily LLM budget (`DAILY_COST_LIMIT_USD`) exceeded.
 
-## Future agents (M3)
+## Architect (M3)
 
-`Architect`, `Tickets`, `Reviewer`, `Refactor` will follow the same convention:
+7-node LangGraph (`clarify → retrieve_context → propose_services → design_data_model → design_apis → nfr_pass → synthesize`). Synthesize uses Opus; the rest use Sonnet.
 
-- One POST route under `/agents/<name>`.
-- Pydantic request + response models.
-- `thread_id` support via the shared Postgres checkpointer.
-- The same `429` / `503` semantics on budget / config failures.
+### Request
+
+```ts
+{
+  requirement: string;        // 8..8000 chars
+  repo?: string;              // optional: pull graph context from this ingested repo
+  thread_id?: string;
+}
+```
+
+### Response
+
+```ts
+{
+  proposal: {
+    services: ProposedService[];
+    tables: ProposedTable[];
+    endpoints: ProposedEndpoint[];
+    nfrs: NfrConcern[];
+    markdown: string;         // PR/RFC-ready architecture doc
+    graph_delta: {
+      nodes: { label, qname, props }[];
+      edges: { from_qname, to_qname, rel_type, props }[];
+    };
+  };
+  thread_id: string;
+}
+```
+
+Side effect: when `repo` is set, the `graph_delta` is staged into `decision_log` (status `proposed`). A human approves via the M4 UI before any Neo4j write.
+
+## Tickets (M3)
+
+Single-call LLM with `with_structured_output(TicketList)`.
+
+### Request
+
+```ts
+{ feature: string; repo?: string; target_qname?: string; thread_id?: string; }
+```
+
+### Response
+
+```ts
+{
+  tickets: {
+    kind: "FE" | "API" | "DB" | "tests" | "observability" | "rollout" | "docs";
+    title: string;
+    description: string;
+    depends_on: string[];       // titles of earlier tickets in this batch
+    touches_qnames: string[];   // graph nodes the ticket modifies, when known
+  }[];
+  thread_id: string;
+}
+```
+
+## Reviewer (M3) — no LLM required
+
+Runs deterministic graph checks against the ingested repo. Critical / important / advisory findings sorted in that order.
+
+### Request
+
+```ts
+{ repo: string; changed_files: string[]; }   // changed_files is posix paths
+```
+
+### Response
+
+```ts
+{
+  repo: string;
+  findings: {
+    severity: "critical" | "important" | "advisory";
+    rule: string;
+    message: string;
+    qname?: string;
+    file_path?: string;
+    line?: number;
+  }[];
+  summary: { critical: number; important: number; advisory: number };
+}
+```
+
+v1 rules: `circular_import`, `high_fanin_change` (≥10 callers), `low_confidence_callers` (<0.5), `missing_tests`.
+
+## Refactor (M3) — no LLM required
+
+Graph analytics: dead code + high-coupling modules. Duplicate-logic clustering is stubbed pending pgvector embeddings.
+
+### Request
+
+```ts
+{ repo: string; }
+```
+
+### Response
+
+```ts
+{
+  repo: string;
+  items: {
+    kind: "dead_code" | "high_coupling" | "duplicate_logic";
+    qname: string;
+    title: string;
+    rationale: string;
+    risk: "low" | "medium" | "high";
+    blast_radius: number;
+    file_path?: string;
+    line?: number;
+  }[];
+  summary: Record<kind, number>;
+}
+```
+
+## Decision-log write path
+
+Every graph mutation an agent proposes lands as a row in `decision_log` with `status='proposed'`. The UI (M4) will let a human flip it to `approved` or `rejected`; an applier then writes the mutation to Neo4j and marks the row `applied`. Allowed labels: `Service`, `API`, `DBTable`, `Feature`, `InfraComponent`. Allowed edge types: `DEPENDS_ON`, `OWNS`, `CALLS`, `WRITES_TO`, `READS_FROM`, `DEPLOYED_ON`.
 
 ## Tool safety
 

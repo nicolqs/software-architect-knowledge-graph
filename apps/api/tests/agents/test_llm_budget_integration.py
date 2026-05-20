@@ -12,7 +12,6 @@ still runs cleanly on a fresh checkout.
 
 from __future__ import annotations
 
-import os
 from uuid import uuid4
 
 import pytest
@@ -29,11 +28,9 @@ from architect.config import Settings
 
 def _live_postgres_available() -> bool:
     import socket
-
-    host = os.getenv("POSTGRES_HOST", "localhost")
-    port = int(os.getenv("POSTGRES_PORT", "5432"))
+    s = Settings()
     try:
-        with socket.create_connection((host, port), timeout=0.5):
+        with socket.create_connection((s.postgres_host, s.postgres_port), timeout=0.5):
             return True
     except OSError:
         return False

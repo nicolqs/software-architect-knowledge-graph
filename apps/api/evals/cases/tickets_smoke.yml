@@ -1,0 +1,4 @@
+name: tickets-builds
+kind: smoke
+agent: tickets
+description: Tickets agent's LangGraph + structured output binding compiles cleanly.

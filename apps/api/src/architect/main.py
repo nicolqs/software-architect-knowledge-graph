@@ -9,7 +9,11 @@ from pydantic import BaseModel
 
 from architect import __version__
 from architect.agents.common.checkpointer import close_checkpointer, init_checkpointer
-from architect.api.agents import router as agents_router
+from architect.api.agents import router as echo_router
+from architect.api.architect import router as architect_router
+from architect.api.refactor import router as refactor_router
+from architect.api.reviewer import router as reviewer_router
+from architect.api.tickets import router as tickets_router
 from architect.config import get_settings
 from architect.embeddings import store
 from architect.graph import client as graph_client
@@ -58,7 +62,11 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.include_router(agents_router)
+    app.include_router(echo_router)
+    app.include_router(architect_router)
+    app.include_router(tickets_router)
+    app.include_router(reviewer_router)
+    app.include_router(refactor_router)
 
     class Health(BaseModel):
         status: Literal["ok", "degraded"]

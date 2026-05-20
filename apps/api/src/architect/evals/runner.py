@@ -24,9 +24,13 @@ import structlog
 import yaml
 from langchain_core.messages import AIMessage, HumanMessage
 
+from architect.agents.architect.graph import build_architect_graph
 from architect.agents.common.checkpointer import close_checkpointer, init_checkpointer
 from architect.agents.common.llm import LLMClient
 from architect.agents.echo.graph import build_echo_graph
+from architect.agents.refactor.analyses import plan_refactors
+from architect.agents.reviewer.checks import run_checks
+from architect.agents.tickets.graph import build_tickets_graph
 from architect.config import get_settings
 from architect.embeddings import store as embed_store
 from architect.graph import client as graph_client
@@ -67,20 +71,44 @@ def _assert_contains_any(text: str, options: list[str]) -> tuple[bool, str]:
 
 
 async def _run_smoke(case: dict[str, Any]) -> CaseResult:
-    # Smoke cases just verify the named agent's graph can be constructed.
+    """Smoke checks verify framework wiring without calling the LLM.
+
+    For LangGraph agents: assert the graph builds. For analysis agents
+    (reviewer, refactor): actually run the analysis against the supplied
+    repo so a graph regression surfaces here, not later.
+    """
     agent = case.get("agent", "echo")
-    if agent == "echo":
-        settings = get_settings()
-        # No DB needed to *construct* the LLMClient — but the build_echo_graph
-        # call requires an initialized checkpointer. The runner sets that up
-        # if it can; if it can't (no Postgres), we still want the smoke case
-        # to fail cleanly with a useful message.
-        try:
-            client = LLMClient(settings, embed_store.get_pool())
-            build_echo_graph(client)
-        except Exception as exc:
-            return CaseResult(name=case["name"], status="fail", detail=f"build failed: {exc}")
-    return CaseResult(name=case["name"], status="pass", detail="graph built")
+    settings = get_settings()
+    pool = embed_store.get_pool()
+    try:
+        if agent == "echo":
+            build_echo_graph(LLMClient(settings, pool))
+            return CaseResult(name=case["name"], status="pass", detail="echo graph built")
+        if agent == "tickets":
+            build_tickets_graph(LLMClient(settings, pool))
+            return CaseResult(name=case["name"], status="pass", detail="tickets graph built")
+        if agent == "architect":
+            build_architect_graph(LLMClient(settings, pool), settings, pool)
+            return CaseResult(name=case["name"], status="pass", detail="architect graph built")
+        if agent == "reviewer":
+            inp = case.get("input") or {}
+            findings = await run_checks(inp["repo"], inp.get("changed_files") or [])
+            return CaseResult(
+                name=case["name"],
+                status="pass",
+                detail=f"reviewer ran; {len(findings)} findings",
+            )
+        if agent == "refactor":
+            inp = case.get("input") or {}
+            items = await plan_refactors(inp["repo"])
+            return CaseResult(
+                name=case["name"],
+                status="pass",
+                detail=f"refactor planner ran; {len(items)} items",
+            )
+    except Exception as exc:
+        return CaseResult(name=case["name"], status="fail", detail=f"smoke failed: {exc}")
+    return CaseResult(name=case["name"], status="fail", detail=f"unknown smoke agent: {agent!r}")
 
 
 async def _run_agent(case: dict[str, Any]) -> CaseResult:
