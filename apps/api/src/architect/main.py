@@ -11,6 +11,8 @@ from architect import __version__
 from architect.config import get_settings
 from architect.embeddings import store
 from architect.graph import client as graph_client
+from architect.graph import schema as graph_schema
+from architect.migrations import run_migrations
 
 log = structlog.get_logger()
 
@@ -20,7 +22,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     graph_client.init_driver(settings)
     await store.init_pool(settings)
-    log.info("startup", neo4j=settings.neo4j_uri, postgres=settings.postgres_host)
+    pool = store.get_pool()
+    async with pool.connection() as conn:
+        applied = await run_migrations(conn)
+    await graph_schema.apply()
+    log.info(
+        "startup",
+        neo4j=settings.neo4j_uri,
+        postgres=settings.postgres_host,
+        sql_migrations_applied=applied,
+    )
     try:
         yield
     finally:
