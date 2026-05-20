@@ -188,10 +188,13 @@ async def subgraph_around(
             })
             YIELD nodes, relationships
             RETURN
-                [n IN nodes | {qname: n.qname, label: labels(n)[0]}] AS nodes,
+                [n IN nodes | {
+                    qname: coalesce(n.qname, n.name, '<unknown>'),
+                    label: labels(n)[0]
+                }] AS nodes,
                 [r IN relationships | {
-                    from_qname: startNode(r).qname,
-                    to_qname:   endNode(r).qname,
+                    from_qname: coalesce(startNode(r).qname, startNode(r).name, '<unknown>'),
+                    to_qname:   coalesce(endNode(r).qname,   endNode(r).name,   '<unknown>'),
                     rel:        type(r)
                 }] AS edges
             """,

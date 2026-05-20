@@ -11,6 +11,8 @@ from architect import __version__
 from architect.agents.common.checkpointer import close_checkpointer, init_checkpointer
 from architect.api.agents import router as echo_router
 from architect.api.architect import router as architect_router
+from architect.api.decisions import router as decisions_router
+from architect.api.graph import router as graph_routes_router
 from architect.api.refactor import router as refactor_router
 from architect.api.reviewer import router as reviewer_router
 from architect.api.tickets import router as tickets_router
@@ -67,6 +69,8 @@ def create_app() -> FastAPI:
     app.include_router(tickets_router)
     app.include_router(reviewer_router)
     app.include_router(refactor_router)
+    app.include_router(graph_routes_router)
+    app.include_router(decisions_router)
 
     class Health(BaseModel):
         status: Literal["ok", "degraded"]
