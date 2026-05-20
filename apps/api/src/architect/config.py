@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -14,11 +15,32 @@ class Settings(BaseSettings):
     # LLM
     anthropic_api_key: str = ""
     openai_api_key: str = ""
+    # Which provider drives the agent LLMs. Pricing + model names branch on this.
+    # Embeddings always use OpenAI regardless.
+    agent_provider: Literal["anthropic", "openai"] = "anthropic"
     agent_model_default: str = "claude-sonnet-4-6"
     agent_model_architect: str = "claude-opus-4-7"
     embedding_model: str = "text-embedding-3-large"
     daily_cost_limit_usd: float = 20.0
     ingest_cost_limit_usd: float = 5.0
+
+    @property
+    def active_api_key(self) -> str:
+        """Return the API key for the configured agent provider."""
+        return self.openai_api_key if self.agent_provider == "openai" else self.anthropic_api_key
+
+    @property
+    def active_default_model(self) -> str:
+        """Sensible default per provider — keeps Architect routing meaningful."""
+        if self.agent_provider == "openai":
+            return "gpt-4o-mini" if self.agent_model_default.startswith("claude-") else self.agent_model_default
+        return self.agent_model_default
+
+    @property
+    def active_architect_model(self) -> str:
+        if self.agent_provider == "openai":
+            return "gpt-4o" if self.agent_model_architect.startswith("claude-") else self.agent_model_architect
+        return self.agent_model_architect
 
     # Neo4j
     neo4j_uri: str = "bolt://localhost:7687"

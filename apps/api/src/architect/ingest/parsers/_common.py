@@ -50,13 +50,6 @@ def iter_children(node: Any) -> Iterator[Any]:
         yield node.child(i)
 
 
-def find_child_by_kind(node: Any, kind: str) -> Any | None:
-    for child in iter_children(node):
-        if child.kind() == kind:
-            return child
-    return None
-
-
 def python_module_qname(rel_path: str) -> str:
     """`foo/bar/baz.py` → `foo.bar.baz`. `foo/__init__.py` → `foo`."""
     p = PurePosixPath(rel_path)

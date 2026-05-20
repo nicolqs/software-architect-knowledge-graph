@@ -25,11 +25,15 @@ from architect.ingest.types import ParsedCall, ParsedDef, ParsedFile, ParsedImpo
 _parser = get_parser("python")
 
 
-def parse_python(*, repo: str, rel_path: str, source: bytes) -> ParsedFile:
+def parse_python(
+    *, repo: str, rel_path: str, source: bytes, qname_path: str | None = None
+) -> ParsedFile:
     # tree-sitter wants str, but byte_range() is in bytes — see _common.text().
     tree = _parser.parse(source.decode("utf-8", errors="replace"))
     assert tree is not None  # parser.parse only returns None on edit-tree usage
-    module_qname = python_module_qname(rel_path)
+    # qname_path drops the project-source-root prefix so e.g. `architect.foo`
+    # imports match. Falls back to rel_path for single-package projects.
+    module_qname = python_module_qname(qname_path or rel_path)
     pf = ParsedFile(
         repo=repo,
         path=rel_path,
@@ -63,6 +67,10 @@ def _walk(
         _collect_class(node, source, parent_qname, pf)
     elif kind == "call" and enclosing_func is not None:
         _collect_call(node, source, enclosing_func, pf)
+        # Recurse so nested calls inside arguments (e.g. `f(g(x), h=k())`)
+        # are picked up too. Without this, only the outermost call counts.
+        for child in iter_children(node):
+            _walk(child, source, parent_qname, pf, enclosing_func=enclosing_func)
     else:
         for child in iter_children(node):
             _walk(child, source, parent_qname, pf, enclosing_func=enclosing_func)

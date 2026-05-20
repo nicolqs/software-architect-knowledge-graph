@@ -42,10 +42,14 @@ def _load_gitignore(root: Path) -> pathspec.PathSpec[Any]:
     return pathspec.PathSpec.from_lines("gitignore", gitignore.read_text().splitlines())
 
 
-def walk_repo(root: Path, *, limit: int | None = None) -> Iterator[tuple[str, bytes]]:
-    """Yield (rel_path, bytes) for every supported source file under root.
+def walk_repo(
+    root: Path, *, limit: int | None = None
+) -> Iterator[tuple[str, Path, bytes]]:
+    """Yield (rel_path, abs_path, bytes) for every supported source file.
 
-    rel_path is posix-style and relative to root.
+    `rel_path` is posix-style and relative to `root` — used for the File node.
+    `abs_path` is the absolute Path — used by the source-root mapper to
+    compute the qname relative to the project's actual Python/TS source root.
     """
     spec = _load_gitignore(root)
     yielded = 0
@@ -59,7 +63,7 @@ def walk_repo(root: Path, *, limit: int | None = None) -> Iterator[tuple[str, by
             continue
         if len(data) > _MAX_FILE_BYTES:
             continue
-        yield rel, data
+        yield rel, path, data
         yielded += 1
         if limit is not None and yielded >= limit:
             return

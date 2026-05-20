@@ -37,10 +37,13 @@ class TicketsResponse(BaseModel):
 @router.post("", response_model=TicketsResponse)
 async def tickets(request: TicketsRequest) -> TicketsResponse:
     settings = get_settings()
-    if not settings.anthropic_api_key:
+    if not settings.active_api_key:
         raise HTTPException(
             status_code=503,
-            detail="ANTHROPIC_API_KEY is not configured; the tickets agent cannot run.",
+            detail=(
+                f"No API key configured for AGENT_PROVIDER={settings.agent_provider!r}; "
+                "the tickets agent cannot run."
+            ),
         )
     client = LLMClient(settings, get_pool())
     graph = build_tickets_graph(client)

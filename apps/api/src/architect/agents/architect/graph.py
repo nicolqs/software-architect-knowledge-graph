@@ -170,10 +170,10 @@ def build_architect_graph(client: LLMClient, settings: Settings, pool: AsyncConn
 
     async def synthesize(state: AgentState) -> dict[str, Any]:
         await client.check_budget()
-        # Opus for the deep-reasoning step. One call per architect run; the
-        # plan's cost guardrail explicitly carves this out.
+        # Opus (Anthropic) / gpt-4o (OpenAI) for the deep-reasoning step.
+        # One call per architect run; the plan's cost guardrail carves this out.
         model = client.make_model(
-            agent="architect", model_name=settings.agent_model_architect
+            agent="architect", model_name=settings.active_architect_model
         ).with_structured_output(ArchitectureProposal)
         scratch = state.get("scratch", {})
         context_msg = AIMessage(

@@ -50,10 +50,3 @@ async def close_checkpointer() -> None:
         await _conn.close()
         _conn = None
     _saver = None
-
-
-def reset_for_tests() -> None:
-    """Reset the module-global so tests can re-init with fresh state."""
-    global _saver, _conn
-    _saver = None
-    _conn = None

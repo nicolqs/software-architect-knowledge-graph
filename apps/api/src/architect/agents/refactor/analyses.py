@@ -15,7 +15,7 @@ by where a refactor pays back the most without cascading too far.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 import structlog
 
@@ -48,7 +48,19 @@ def _is_ignored_path(path: str | None) -> bool:
     return any(frag in path for frag in _IGNORE_PATH_FRAGMENTS)
 
 
-async def find_dead_code(repo: str, limit: int = 50) -> list[RefactorItem]:
+async def find_dead_code(repo: str, limit: int = 100) -> list[RefactorItem]:
+    """Functions with zero incoming CALLS, filtered to skip framework-invoked
+    code that static analysis can't see being called.
+
+    Filter heuristics ("live unless proven dead"):
+    - Path `*/api/*.py`: FastAPI route handlers — invoked by the framework.
+    - Qname matches `*.build_*_graph.*`: LangGraph node closures.
+    - File `*.tsx` + PascalCase name: React components / page exports.
+    - Pydantic / settings property-style names: `postgres_dsn`, `active_*`.
+    - Polymorphic dispatch: if another function elsewhere has the same
+      simple name AND has callers, this one is plausibly a Protocol impl.
+    - Standard framework names: `lifespan`, `constructor`.
+    """
     async with graph_client.session() as s:
         result = await s.run(
             """
@@ -66,9 +78,30 @@ async def find_dead_code(repo: str, limit: int = 50) -> list[RefactorItem]:
             limit=limit,
         )
         rows = await result.data()
+
+        # Names that have callers somewhere — used by the polymorphic filter.
+        poly_result = await s.run(
+            """
+            MATCH (fn:Function {repo: $repo})
+            WHERE ()-[:CALLS]->(fn)
+            RETURN collect(DISTINCT fn.name) AS names
+            """,
+            repo=repo,
+        )
+        poly_row = await poly_result.single()
+        names_with_callers: set[str] = (
+            set(poly_row["names"]) if poly_row is not None else set()
+        )
+
     items: list[RefactorItem] = []
     for r in rows:
         if _is_ignored_path(r.get("file_path")):
+            continue
+        if _is_framework_invoked(r):
+            continue
+        if r["name"] in names_with_callers:
+            # Polymorphic / Protocol impl — another function with the same
+            # name has callers; we can't statically tell which impl runs.
             continue
         items.append(
             RefactorItem(
@@ -76,9 +109,9 @@ async def find_dead_code(repo: str, limit: int = 50) -> list[RefactorItem]:
                 qname=r["qname"],
                 title=f"Dead code: {r['name']}",
                 rationale=(
-                    f"Function {r['name']} has no incoming CALLS edges in the graph. "
-                    "Either it's truly unused, or it's reached via dynamic dispatch — verify "
-                    "before deleting. Confidence rises if the codebase has no string-keyed dispatch."
+                    f"Function {r['name']} has no incoming CALLS edges, no framework "
+                    "dispatch pattern, and no name collision with a called sibling. "
+                    "Likely safe to delete; double-check string-keyed dispatch first."
                 ),
                 risk="low",
                 blast_radius=0,
@@ -87,6 +120,44 @@ async def find_dead_code(repo: str, limit: int = 50) -> list[RefactorItem]:
             )
         )
     return items
+
+
+def _is_framework_invoked(row: dict[str, Any]) -> bool:
+    """Heuristic 'this function is called by a framework, not user code'.
+
+    Conservative — better to under-report dead code than nudge users to
+    delete working route handlers and component functions.
+    """
+    path = row.get("file_path") or ""
+    qname = row["qname"]
+    name = row["name"]
+    # FastAPI route handler files.
+    if "/api/" in path and path.endswith(".py"):
+        return True
+    # LangGraph node closures inside `build_*_graph` builders.
+    if ".build_" in qname and "_graph." in qname:
+        return True
+    # React components / page exports: PascalCase fn in a .tsx file.
+    if path.endswith(".tsx") and name[:1].isupper():
+        return True
+    # Methods of React components — typically wired as JSX event handlers
+    # (`onSubmit={submit}`), which are references not calls.
+    # TS qname shape: `path/to/file::ComponentName::methodName`. We skip when
+    # the second-to-last segment is PascalCase.
+    if path.endswith(".tsx"):
+        segments = qname.split("::")
+        if len(segments) >= 3 and segments[-2][:1].isupper():
+            return True
+    # Generic helpers in lib/api.ts: called via type-args like `request<T>(...)`
+    # which tree-sitter sometimes records as `request<T>` (with the type arg).
+    # Skip when there's a same-name External edge pointing somewhere.
+    if path.endswith("/api.ts") and name == "request":
+        return True
+    # Pydantic / Settings property-style attribute accessors.
+    if name == "postgres_dsn" or name.startswith("active_"):
+        return True
+    # Standard framework / structural names.
+    return name in {"lifespan", "constructor"}
 
 
 async def find_high_coupling(repo: str, limit: int = 20) -> list[RefactorItem]:

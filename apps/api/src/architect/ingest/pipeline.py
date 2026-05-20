@@ -21,6 +21,7 @@ from architect.graph import schema as graph_schema
 from architect.ingest import resolver as resolver_mod
 from architect.ingest import writer
 from architect.ingest.parsers import parse_file
+from architect.ingest.source_roots import detect_source_roots, qname_relative_path
 from architect.ingest.types import ParsedFile
 from architect.ingest.walker import walk_repo
 from architect.migrations import run_migrations
@@ -65,12 +66,23 @@ async def run_ingest(opts: IngestOptions, settings: Settings) -> IngestStats:
 
     await writer.upsert_repo(opts.repo_name, str(opts.repo_path))
 
+    # Detect source roots ONCE per ingest. Used below to compute qnames
+    # relative to e.g. `apps/api/src` instead of the monorepo root, so
+    # imports written `architect.foo` match.
+    source_roots = detect_source_roots(opts.repo_path)
+
     # Pass 1: parse every file into memory. For ~10k files this is fine —
     # ParsedFile is small. If we outgrow it we'll switch to streaming.
     parsed: list[ParsedFile] = []
-    for rel_path, data in walk_repo(opts.repo_path, limit=opts.file_limit):
+    for rel_path, abs_path, data in walk_repo(opts.repo_path, limit=opts.file_limit):
+        qpath = qname_relative_path(abs_path, source_roots, opts.repo_path)
         try:
-            pf = parse_file(repo=opts.repo_name, rel_path=rel_path, source=data)
+            pf = parse_file(
+                repo=opts.repo_name,
+                rel_path=rel_path,
+                source=data,
+                qname_path=qpath,
+            )
         except Exception as exc:
             log.warning("parse_failed", path=rel_path, error=str(exc))
             continue

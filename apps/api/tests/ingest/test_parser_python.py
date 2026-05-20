@@ -71,6 +71,29 @@ def test_multibyte_does_not_corrupt_names() -> None:
     assert called == {"graph_client_init"}
 
 
+NESTED_CALLS = b'''
+def outer():
+    return wrap(inner(x), other=helper(y))
+
+
+def f():
+    return list(filter(predicate, items))
+'''
+
+
+def test_recurses_into_nested_calls_in_argument_list() -> None:
+    """Regression: a `call` node must walk its argument list so nested calls
+    (function args, keyword arg values, comprehensions) are captured.
+    Before the fix, only the outermost call was recorded.
+    """
+    pf = parse_python(repo="demo", rel_path="m.py", source=NESTED_CALLS)
+    by_caller: dict[str, set[str]] = {}
+    for c in pf.calls:
+        by_caller.setdefault(c.caller_qname, set()).add(c.called_name)
+    assert {"wrap", "inner", "helper"}.issubset(by_caller["m.outer"])
+    assert {"list", "filter"}.issubset(by_caller["m.f"])
+
+
 def test_extracts_calls() -> None:
     pf = parse_python(repo="demo", rel_path="pkg/mod.py", source=SAMPLE)
     callers = {c.caller_qname for c in pf.calls}

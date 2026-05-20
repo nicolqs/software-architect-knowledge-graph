@@ -22,11 +22,15 @@ _parser_ts = get_parser("typescript")
 _parser_tsx = get_parser("tsx")
 
 
-def parse_typescript(*, repo: str, rel_path: str, source: bytes) -> ParsedFile:
+def parse_typescript(
+    *, repo: str, rel_path: str, source: bytes, qname_path: str | None = None
+) -> ParsedFile:
     parser = _parser_tsx if PurePosixPath(rel_path).suffix.lower() == ".tsx" else _parser_ts
     tree = parser.parse(source.decode("utf-8", errors="replace"))
     assert tree is not None
-    module_qname = ts_module_qname(rel_path)
+    # qname_path drops the project-source-root prefix (e.g. apps/web/src) so
+    # imports `./Layout` from a TS file resolve to known module qnames.
+    module_qname = ts_module_qname(qname_path or rel_path)
     pf = ParsedFile(
         repo=repo,
         path=rel_path,
@@ -57,12 +61,22 @@ def _walk(
     elif kind == "class_declaration":
         _collect_class(node, source, parent_qname, pf)
     elif kind in ("lexical_declaration", "variable_declaration"):
+        # If the declaration creates a named function (const f = () => ...),
+        # _collect_named_function_expr registers it as a definition. Either way
+        # we still need to walk children so nested calls inside non-function
+        # initializers (e.g. `const x = useMemo(() => helper())`) are captured.
         _collect_named_function_expr(node, source, parent_qname, pf)
+        for c in iter_children(node):
+            _walk(c, source, parent_qname, pf, enclosing_func=enclosing_func)
     elif kind == "export_statement":
         for c in iter_children(node):
             _walk(c, source, parent_qname, pf, enclosing_func=enclosing_func)
     elif kind == "call_expression" and enclosing_func is not None:
         _collect_call(node, source, enclosing_func, pf)
+        # Recurse: nested calls inside the argument list need to be captured
+        # too (`f(g(x), h(k()))` would otherwise lose g, h, k).
+        for child in iter_children(node):
+            _walk(child, source, parent_qname, pf, enclosing_func=enclosing_func)
     else:
         for child in iter_children(node):
             _walk(child, source, parent_qname, pf, enclosing_func=enclosing_func)

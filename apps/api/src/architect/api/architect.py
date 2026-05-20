@@ -34,10 +34,13 @@ class ArchitectResponse(BaseModel):
 @router.post("", response_model=ArchitectResponse)
 async def architect(request: ArchitectRequest) -> ArchitectResponse:
     settings = get_settings()
-    if not settings.anthropic_api_key:
+    if not settings.active_api_key:
         raise HTTPException(
             status_code=503,
-            detail="ANTHROPIC_API_KEY is not configured; the architect agent cannot run.",
+            detail=(
+                f"No API key configured for AGENT_PROVIDER={settings.agent_provider!r}; "
+                "the architect agent cannot run."
+            ),
         )
     pool = get_pool()
     client = LLMClient(settings, pool)

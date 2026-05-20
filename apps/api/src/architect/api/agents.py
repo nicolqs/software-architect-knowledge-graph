@@ -33,11 +33,13 @@ class EchoResponse(BaseModel):
 @router.post("/echo", response_model=EchoResponse)
 async def echo(request: EchoRequest) -> EchoResponse:
     settings = get_settings()
-    if not settings.anthropic_api_key:
-        # Surface this clearly: an LLM-backed agent needs a key, period.
+    if not settings.active_api_key:
         raise HTTPException(
             status_code=503,
-            detail="ANTHROPIC_API_KEY is not configured; the echo agent cannot run.",
+            detail=(
+                f"No API key configured for AGENT_PROVIDER={settings.agent_provider!r}; "
+                "the echo agent cannot run."
+            ),
         )
 
     client = LLMClient(settings, get_pool())

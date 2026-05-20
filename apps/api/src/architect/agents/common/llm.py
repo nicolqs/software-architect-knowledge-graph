@@ -21,8 +21,10 @@ from uuid import UUID
 
 import structlog
 from langchain_anthropic import ChatAnthropic
-from langchain_core.callbacks import AsyncCallbackHandler
+from langchain_core.callbacks import AsyncCallbackHandler, BaseCallbackHandler
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.outputs import LLMResult
+from langchain_openai import ChatOpenAI
 from psycopg_pool import AsyncConnectionPool
 from pydantic import SecretStr
 
@@ -39,15 +41,20 @@ class BudgetExceededError(RuntimeError):
 # deterministic regardless of pricing-page changes; revisit when models bump.
 _PRICING: dict[str, tuple[float, float]] = {
     # model_name → (input_per_million, output_per_million)
+    # Anthropic
     "claude-sonnet-4-6": (3.0, 15.0),
     "claude-opus-4-7": (15.0, 75.0),
+    # OpenAI
+    "gpt-4o-mini": (0.15, 0.60),
+    "gpt-4o": (2.50, 10.00),
+    "gpt-4-turbo": (10.0, 30.0),
 }
 
 
 def _price_for(model_name: str) -> tuple[float, float]:
     if model_name in _PRICING:
         return _PRICING[model_name]
-    # Fall back to the conservative Opus pricing so unknown models surface
+    # Fall back to the most-expensive known model so unknown names surface
     # as expensive rather than silently free.
     return _PRICING["claude-opus-4-7"]
 
@@ -81,10 +88,18 @@ class _TokenMeterCallback(AsyncCallbackHandler):
         parent_run_id: UUID | None = None,
         **kwargs: Any,
     ) -> None:
-        usage = (response.llm_output or {}).get("usage") or {}
-        model = (response.llm_output or {}).get("model_name") or "unknown"
-        input_tokens = int(usage.get("input_tokens", 0))
-        output_tokens = int(usage.get("output_tokens", 0))
+        # Anthropic and OpenAI report usage under different keys.
+        # langchain-anthropic: llm_output['usage'] = {input_tokens, output_tokens}
+        # langchain-openai:    llm_output['token_usage'] = {prompt_tokens, completion_tokens, total_tokens}
+        llm_output = response.llm_output or {}
+        usage = llm_output.get("usage") or llm_output.get("token_usage") or {}
+        model = (
+            llm_output.get("model_name")
+            or llm_output.get("model")
+            or "unknown"
+        )
+        input_tokens = int(usage.get("input_tokens", usage.get("prompt_tokens", 0)))
+        output_tokens = int(usage.get("output_tokens", usage.get("completion_tokens", 0)))
         in_price, out_price = _price_for(model)
         cost = (input_tokens / 1_000_000) * in_price + (output_tokens / 1_000_000) * out_price
         async with self._pool.connection() as conn, conn.cursor() as cur:
@@ -128,13 +143,28 @@ class LLMClient:
         agent: str | None = None,
         model_name: str | None = None,
         temperature: float = 0.2,
-    ) -> ChatAnthropic:
-        name = model_name or self._settings.agent_model_default
+    ) -> BaseChatModel:
+        """Build a metered chat model for the configured provider.
+
+        Falls back to the provider's default model name unless `model_name` is
+        supplied. Architects pass `settings.active_architect_model` here so the
+        synthesize step gets Opus (Anthropic) or gpt-4o (OpenAI).
+        """
+        provider = self._settings.agent_provider
+        name = model_name or self._settings.active_default_model
+        callbacks: list[BaseCallbackHandler] = [_TokenMeterCallback(self._pool, agent)]
+        if provider == "openai":
+            return ChatOpenAI(
+                model=name,
+                api_key=SecretStr(self._settings.openai_api_key),
+                temperature=temperature,
+                callbacks=callbacks,
+            )
         return ChatAnthropic(
             model_name=name,
             api_key=SecretStr(self._settings.anthropic_api_key),
             temperature=temperature,
-            callbacks=[_TokenMeterCallback(self._pool, agent)],
+            callbacks=callbacks,
             timeout=None,
             stop=None,
         )
@@ -162,19 +192,5 @@ class LLMClient:
                 f"DAILY_COST_LIMIT_USD=${limit:.2f}. Refusing further LLM calls until tomorrow."
             )
         log.debug("budget_ok", spent_usd=round(spent, 4), limit_usd=limit)
-
-    async def today_spent_usd(self) -> float:
-        """Return today's total LLM spend (for the UI / debugging)."""
-        async with self._pool.connection() as conn, conn.cursor() as cur:
-            await cur.execute(
-                """
-                SELECT COALESCE(SUM(cost_usd), 0)::float8
-                FROM cost_log
-                WHERE occurred_at >= date_trunc('day', now())
-                """
-            )
-            row = await cur.fetchone()
-            return float(row[0]) if row else 0.0
-
 
 __all__ = ["BudgetExceededError", "CostRecord", "LLMClient"]
