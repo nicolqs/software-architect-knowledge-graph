@@ -114,6 +114,19 @@ Documented in detail under `docs/`. A few that are easy to miss:
 - The Refactor planner's `_is_framework_invoked` filter treats any function under `*/api/*.py` as a route handler — true for this repo's layout, will under-report dead code in repos where `api/` is a generic helpers module. Proper fix is decorator extraction at parse time; deferred to v2.
 - `/sandbox/run` has no auth in v1 — fine for `localhost` dev, but add auth before exposing the API beyond the local machine.
 
+## Built with Claude Code
+
+This repo was built end-to-end in [Claude Code](https://claude.com/claude-code) — every commit on `main` is one milestone, designed in **plan mode** (`shift-tab` twice to enter) and shipped non-interactively after approval. The full plan lives at `docs/architecture.md`; the milestone walkthrough is at `docs/demo.md`.
+
+**Stack-specific skills used during the build** (installed at `.agents/skills/`, [skills.sh](https://skills.sh)):
+
+- `langgraph-fundamentals`, `langgraph-persistence`, `langgraph-human-in-the-loop` — agent runtime + the Postgres checkpointer + the interrupt pattern we'll need for Architect's `clarify` node.
+- `langchain-fundamentals`, `langchain-middleware` — the `LLMClient` cost-meter callback is a LangChain `BaseCallbackHandler`.
+- `neo4j-cypher-skill`, `neo4j-driver-python-skill`, `neo4j-modeling-skill`, `neo4j-query-tuning-skill`, `neo4j-vector-index-skill` — graph schema, parameterized queries, the APOC `apoc.merge.node` polymorphic write.
+- `fastapi` — the REST surface in `apps/api/src/architect/api/`.
+
+Plus skills invoked directly during development: `review` (every milestone closed with a staff-engineer review pass that auto-fixed Critical/High findings) and `agent-browser` (for live UI verification screenshots).
+
 ## License
 
 [MIT](LICENSE) — © 2026 Nicolas Vincent
