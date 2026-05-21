@@ -108,7 +108,12 @@ Documented in detail under `docs/`. A few that are easy to miss:
 
 ## Known v1 limitations
 
-- Python import resolution assumes the package root is the ingest root. Ingesting a monorepo from above the `src/` dir produces qnames like `apps.api.src.architect.foo` instead of `architect.foo`; cross-file imports then fall to `confidence=0.5` instead of `0.7`. Add a source-root detection pass (read `pyproject.toml`) in v2.
 - Architect's `clarify` node is a pass-through; multi-turn clarification needs LangGraph `interrupt()` + the UI to handle a question-and-resume flow.
 - Refactor's `duplicate_logic` analysis is stubbed — needs vector clustering on the function-body embeddings, which requires `OPENAI_API_KEY` set at ingest time.
 - Langfuse handler is a no-op stub; instrumentation will land when we're calling LLMs in earnest.
+- The Refactor planner's `_is_framework_invoked` filter treats any function under `*/api/*.py` as a route handler — true for this repo's layout, will under-report dead code in repos where `api/` is a generic helpers module. Proper fix is decorator extraction at parse time; deferred to v2.
+- `/sandbox/run` has no auth in v1 — fine for `localhost` dev, but add auth before exposing the API beyond the local machine.
+
+## License
+
+[MIT](LICENSE) — © 2026 Nicolas Vincent
