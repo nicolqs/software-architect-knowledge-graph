@@ -30,43 +30,115 @@ v1 complete. M0 → M6 from the plan are all in. See `git log` — one feat comm
 | UI | Vite + React 18 + TS + Tailwind + `@xyflow/react` |
 | Sandbox | Docker (rootless, `--network=none`, `--cap-drop=ALL`, time + mem limits) |
 
-## Quickstart
+## Quick setup
+
+**Requirements:** Docker + `uv` + `pnpm` + Node 20+. macOS or Linux.
 
 ```bash
-# Once: install deps for every workspace
-make install
+# 1. Clone + install everything
+git clone https://github.com/nicolqs/software-architect-knowledge-graph.git
+cd software-architect-knowledge-graph
+make install              # root pnpm + apps/api (uv) + apps/web (pnpm)
 
-# Bring up Neo4j + Postgres + Langfuse (Docker)
+# 2. Configure
+cp .env.example .env      # already-sane defaults + placeholder passwords
+# Optional: edit .env to switch providers
+#   AGENT_PROVIDER=openai           # or "anthropic"
+# Keep API keys in your shell, not in .env:
+#   export OPENAI_API_KEY=sk-...
+#   export ANTHROPIC_API_KEY=sk-ant-...
+
+# 3. Bring up infra (Neo4j + Postgres + Langfuse via Docker)
 make up
 
-# Copy and edit secrets
-cp .env.example .env
-# At minimum set NEO4J_PASSWORD + POSTGRES_PASSWORD. For agent LLM calls:
-# ANTHROPIC_API_KEY=... For embeddings (optional): OPENAI_API_KEY=...
+# 4. Ingest a repo. This repo into itself is the easiest demo:
+make ingest REPO=$(pwd)
+# Or any other repo:
+make ingest REPO=/path/to/your-project
 
-# Ingest a repo. Skip embeddings if no OpenAI key:
-make ingest REPO=/path/to/some-repo
-# or:
-cd apps/api && uv run python -m architect.ingest /path/to/some-repo --no-embeddings
-
-# Start API + UI in parallel
+# 5. Start API + UI in parallel
 make dev
 # → API: http://localhost:8000   UI: http://localhost:5173
 ```
 
-If port 7474/7687/5432/3001 collide with other local services, override them in your `.env` — see `NEO4J_HTTP_PORT`, `NEO4J_BOLT_PORT`, `POSTGRES_PORT`, `LANGFUSE_PORT` in `.env.example`.
+Port collisions? Override `NEO4J_HTTP_PORT`, `NEO4J_BOLT_PORT`, `POSTGRES_PORT`, `LANGFUSE_PORT` in your `.env` — see `.env.example`.
 
-## Demo
+No API key? You still get the no-LLM agents (Reviewer + Refactor) and the graph viewer. Architect / Tickets / Echo will return a clean `503` until you set a key.
 
-See [`docs/demo.md`](docs/demo.md) for a step-by-step walkthrough hitting every agent.
+## Examples
 
-Short version: ingest this repo into itself with `make ingest REPO=$(pwd)`, then open `localhost:5173` and click through:
+The two no-LLM agents are the fastest way to see this work end-to-end. Both run against the live ingested graph and need no API key.
 
-- **Status** — backend health + ingested repo counts.
-- **Graph** — pick `architect-self` + `apps.api.src.architect.ingest.pipeline.run_ingest`, see a 1-hop subgraph.
-- **Reviewer** — paste `apps/api/src/architect/ingest/writer.py` as changed files; get findings.
-- **Refactor** — pick `architect-self`; get a dead-code + high-coupling plan.
-- **Tickets / Architect** — need `ANTHROPIC_API_KEY`. Architect's `synthesize` step also stages a graph delta into `decision_log`, surfaced under **Decisions**.
+### 1. Browse the graph
+
+Open `http://localhost:5173/graph`. The page auto-loads a subgraph around the most-called function in the repo — you can pick another from the autocomplete (sorted by fan-in) or click one of the "Top callees" shortcuts.
+
+![Graph viewer — auto-loaded subgraph around the most-called function](docs/screenshots/architect-graph-full.png)
+
+Colour key: Function (green), Class (blue), Module (purple), File (yellow), External (gray). Bump **Depth** to 2 or 3 to see the second/third-hop neighbourhood.
+
+```bash
+# Same view, via curl:
+curl 'http://localhost:8000/graph/subgraph?repo=architect-self&qname=architect.api.sandbox.run&depth=1'
+```
+
+### 2. Run a PR review
+
+Open `http://localhost:5173/agents/reviewer`. Pick the repo, paste a few changed-file paths (one per line or comma-separated), click **Run review**. Findings come back sorted by severity (critical → important → advisory). Below is the result for a single-file change against `apps/api/src/architect/ingest/writer.py`:
+
+![PR Reviewer — findings on writer.py](docs/screenshots/architect-reviewer-full.png)
+
+```bash
+# Same call, via curl:
+curl -X POST http://localhost:8000/agents/reviewer \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "repo": "architect-self",
+    "changed_files": ["apps/api/src/architect/ingest/writer.py"]
+  }'
+```
+
+The rules are deterministic Cypher against the live graph — no LLM, no prompt, no randomness. Same input → same findings.
+
+### 3. Plan a refactor
+
+```bash
+curl -X POST http://localhost:8000/agents/refactor \
+  -H 'Content-Type: application/json' \
+  -d '{"repo": "architect-self"}'
+```
+
+Or open `http://localhost:5173/agents/refactor` and click **Run analysis**. Output is an ordered list of items (high-coupling modules first, then dead-code candidates), each with a `risk`, a `blast_radius`, and a concrete `qname` + `file_path:line`.
+
+### 4. Decompose a feature into tickets *(needs `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`)*
+
+```bash
+curl -X POST http://localhost:8000/agents/tickets \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "feature": "Add a per-workout-difficulty filter on the dashboard with per-user persistence",
+    "repo": "architect-self"
+  }'
+```
+
+You get an ordered ticket list — `kind` ∈ `FE | API | DB | tests | observability | rollout | docs`, each with `depends_on` references and `touches_qnames` pointing at graph nodes the ticket modifies.
+
+### 5. Design an architecture from a requirement *(needs an LLM key)*
+
+```bash
+curl -X POST http://localhost:8000/agents/architect \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "requirement": "Build a scalable real-time chat system for 50k concurrent users with delivery receipts and offline sync."
+  }'
+```
+
+Runs the 7-node Architect pipeline (Sonnet 4.6 / gpt-4o-mini for nodes 2-6, Opus 4.7 / gpt-4o for the final `synthesize`). Returns:
+
+- An RFC-ready Markdown architecture document
+- A `proposal.graph_delta` with new `Service`/`API`/`DBTable` nodes that get staged into `decision_log` (status `proposed`) — review and apply them from the **Decisions** tab in the UI.
+
+Full walkthrough hitting every agent (and the sandbox runner): [`docs/demo.md`](docs/demo.md).
 
 ## Repo layout
 
