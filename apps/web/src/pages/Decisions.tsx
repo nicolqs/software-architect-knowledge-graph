@@ -26,6 +26,9 @@ export default function DecisionsPage() {
   }, [filter]);
 
   useEffect(() => {
+    // Data-fetch on mount + filter change. The new react-hooks/set-state-in-
+    // effect rule (plugin v7) flags this; the pattern is intentional.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
 

@@ -4,17 +4,13 @@ A knowledge-graph-backed AI system that behaves like a senior tech lead. Ingest 
 
 | Agent | What it does | Needs LLM? |
 |---|---|---|
-| **Architect** | Requirements → architecture (services + tables + APIs + NFRs) + a staged graph delta you can approve | Yes (Sonnet + Opus) |
-| **Tickets** | Feature description → ordered ticket list (FE / API / DB / tests / observability / rollout) | Yes (Sonnet) |
+| **Architect** | Requirements → architecture (services + tables + APIs + NFRs) + a staged graph delta you can approve | Yes |
+| **Tickets** | Feature description → ordered ticket list (FE / API / DB / tests / observability / rollout) | Yes |
 | **Reviewer** | PR-style audit against the graph: circular imports, high-fanin changes, low-confidence callers, missing tests | No |
 | **Refactor** | Plan: dead code, high-coupling modules, ordered by blast radius | No |
 | **Echo** | Framework smoke-test agent | Yes |
 
 Reviewer and Refactor produce useful output without any LLM — they're pure graph analytics over the ingested repo.
-
-## Status
-
-v1 complete. M0 → M6 from the plan are all in. See `git log` — one feat commit per milestone, plus a couple of `fix(...)` commits for issues caught during milestone testing.
 
 ## Stack
 
@@ -23,11 +19,10 @@ v1 complete. M0 → M6 from the plan are all in. See `git log` — one feat comm
 | Graph DB | Neo4j 5 + APOC |
 | Vector store | Postgres 16 + pgvector |
 | Code parsing | Tree-sitter (Python + TypeScript) via `tree-sitter-language-pack` |
-| Embeddings | OpenAI `text-embedding-3-large` (truncated to 1536 dims) |
+| Embeddings | OpenAI `text-embedding-3-large` |
 | Agent runtime | LangGraph 1.x with Postgres checkpointer |
-| Agent LLMs | Claude Sonnet 4.6 default; Opus 4.7 for the Architect's synthesize step |
 | API | FastAPI + uv |
-| UI | Vite + React 18 + TS + Tailwind + `@xyflow/react` |
+| UI | Vite + React + TS + Tailwind + `@xyflow/react` |
 | Sandbox | Docker (rootless, `--network=none`, `--cap-drop=ALL`, time + mem limits) |
 
 ## Quick setup
@@ -110,7 +105,7 @@ curl -X POST http://localhost:8000/agents/refactor \
 
 Or open `http://localhost:5173/agents/refactor` and click **Run analysis**. Output is an ordered list of items (high-coupling modules first, then dead-code candidates), each with a `risk`, a `blast_radius`, and a concrete `qname` + `file_path:line`.
 
-### 4. Decompose a feature into tickets *(needs `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`)*
+### 4. Decompose a feature into tickets
 
 ```bash
 curl -X POST http://localhost:8000/agents/tickets \
@@ -123,7 +118,7 @@ curl -X POST http://localhost:8000/agents/tickets \
 
 You get an ordered ticket list — `kind` ∈ `FE | API | DB | tests | observability | rollout | docs`, each with `depends_on` references and `touches_qnames` pointing at graph nodes the ticket modifies.
 
-### 5. Design an architecture from a requirement *(needs an LLM key)*
+### 5. Design an architecture from a requirement
 
 ```bash
 curl -X POST http://localhost:8000/agents/architect \
@@ -133,7 +128,7 @@ curl -X POST http://localhost:8000/agents/architect \
   }'
 ```
 
-Runs the 7-node Architect pipeline (Sonnet 4.6 / gpt-4o-mini for nodes 2-6, Opus 4.7 / gpt-4o for the final `synthesize`). Returns:
+Runs the 7-node Architect pipeline. Returns:
 
 - An RFC-ready Markdown architecture document
 - A `proposal.graph_delta` with new `Service`/`API`/`DBTable` nodes that get staged into `decision_log` (status `proposed`) — review and apply them from the **Decisions** tab in the UI.
@@ -178,21 +173,13 @@ Documented in detail under `docs/`. A few that are easy to miss:
 4. **Cost is enforced**, not best-effort. `DAILY_COST_LIMIT_USD` is checked before every LLM call. `BudgetExceededError` surfaces as a 429.
 5. **Sandbox executes untrusted code under** `--network=none --read-only --cap-drop=ALL --user 65534:65534` with wall-clock + memory + pid limits, and only images in an allow-list.
 
-## Known v1 limitations
-
-- Architect's `clarify` node is a pass-through; multi-turn clarification needs LangGraph `interrupt()` + the UI to handle a question-and-resume flow.
-- Refactor's `duplicate_logic` analysis is stubbed — needs vector clustering on the function-body embeddings, which requires `OPENAI_API_KEY` set at ingest time.
-- Langfuse handler is a no-op stub; instrumentation will land when we're calling LLMs in earnest.
-- The Refactor planner's `_is_framework_invoked` filter treats any function under `*/api/*.py` as a route handler — true for this repo's layout, will under-report dead code in repos where `api/` is a generic helpers module. Proper fix is decorator extraction at parse time; deferred to v2.
-- `/sandbox/run` has no auth in v1 — fine for `localhost` dev, but add auth before exposing the API beyond the local machine.
-
 ## Built with Claude Code
 
-This repo was built end-to-end in [Claude Code](https://claude.com/claude-code) — every commit on `main` is one milestone, designed in **plan mode** (`shift-tab` twice to enter) and shipped non-interactively after approval. The full plan lives at `docs/architecture.md`; the milestone walkthrough is at `docs/demo.md`.
+This repo was built end-to-end in [Claude Code](https://claude.com/claude-code) using a **PIV — Plan → Implement → Validate** loop and spec-driven development for real-world usage. Each milestone is planned first, implemented in plan mode, and validated with tests + a `/review` pass before the next one starts. The full plan lives at `docs/architecture.md`; the milestone walkthrough is at `docs/demo.md`.
 
 **Stack-specific skills used during the build** (installed at `.agents/skills/`, [skills.sh](https://skills.sh)):
 
-- `langgraph-fundamentals`, `langgraph-persistence`, `langgraph-human-in-the-loop` — agent runtime + the Postgres checkpointer + the interrupt pattern we'll need for Architect's `clarify` node.
+- `langgraph-fundamentals`, `langgraph-persistence`, `langgraph-human-in-the-loop` — agent runtime + Postgres checkpointer + the interrupt pattern Architect's `clarify` will use.
 - `langchain-fundamentals`, `langchain-middleware` — the `LLMClient` cost-meter callback is a LangChain `BaseCallbackHandler`.
 - `neo4j-cypher-skill`, `neo4j-driver-python-skill`, `neo4j-modeling-skill`, `neo4j-query-tuning-skill`, `neo4j-vector-index-skill` — graph schema, parameterized queries, the APOC `apoc.merge.node` polymorphic write.
 - `fastapi` — the REST surface in `apps/api/src/architect/api/`.
