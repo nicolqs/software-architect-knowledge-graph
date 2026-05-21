@@ -38,11 +38,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
+        # Version is driven by `packageManager` in the root package.json —
+        # don't pass `version:` here too or the action errors on conflict.
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
           cache-dependency-path: apps/web/pnpm-lock.yaml
       - name: Install deps
@@ -65,12 +65,13 @@ jobs:
         with:
           fetch-depth: 0
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Install commitlint
+        # Root has no pnpm-lock.yaml (the package.json there only hosts
+        # commitlint + husky); skip frozen-lockfile + scripts.
+        run: pnpm install --no-frozen-lockfile --ignore-scripts
       - name: Validate PR commits
         run: pnpm exec commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
