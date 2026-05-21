@@ -6,8 +6,14 @@ import {
   type Node,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { useEffect, useMemo, useState } from 'react';
-import { ApiError, api, type RepoSummary, type Subgraph } from '../lib/api';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  ApiError,
+  api,
+  type QnameSuggestion,
+  type RepoSummary,
+  type Subgraph,
+} from '../lib/api';
 
 const LABEL_COLOR: Record<string, string> = {
   Function: '#34d399',
@@ -22,7 +28,6 @@ const LABEL_COLOR: Record<string, string> = {
 };
 
 function layoutSubgraph(sg: Subgraph): { nodes: Node[]; edges: Edge[] } {
-  // Simple radial layout: root in the center, neighbors in a ring.
   const center = { x: 400, y: 300 };
   const radius = 220;
   const ringNodes = sg.nodes.filter((n) => n.qname !== sg.qname);
@@ -74,6 +79,7 @@ export default function GraphPage() {
   const [repo, setRepo] = useState('');
   const [qname, setQname] = useState('');
   const [depth, setDepth] = useState(1);
+  const [suggestions, setSuggestions] = useState<QnameSuggestion[]>([]);
   const [sg, setSg] = useState<Subgraph | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -85,22 +91,68 @@ export default function GraphPage() {
     });
   }, [repo]);
 
-  async function load(e: React.FormEvent) {
+  const load = useCallback(
+    async (targetRepo: string, targetQname: string, targetDepth: number) => {
+      setBusy(true);
+      setError(null);
+      try {
+        setSg(
+          await api.subgraph({
+            repo: targetRepo,
+            qname: targetQname,
+            depth: targetDepth,
+          }),
+        );
+      } catch (e) {
+        setError(e instanceof ApiError ? e.message : String(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [],
+  );
+
+  // On repo change (or first mount), fetch top qnames and auto-load the most-
+  // called one so the canvas isn't empty when you arrive at this page.
+  useEffect(() => {
+    if (!repo) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const sugg = await api.qnames({ repo, limit: 50 });
+        if (cancelled) return;
+        setSuggestions(sugg);
+        if (sugg.length > 0) {
+          const first = sugg[0].qname;
+          setQname(first);
+          await load(repo, first, depth);
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setError(e instanceof ApiError ? e.message : String(e));
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // We deliberately fire only on `repo` change. Re-running on `depth`
+    // changes would replace the user's current view every time they bump
+    // the slider — they can resubmit the form instead. TODO: race-protect
+    // with a sequence number when we add multi-repo switching.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repo]);
+
+  function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!repo || !qname.trim()) return;
-    setBusy(true);
-    setError(null);
-    setSg(null);
-    try {
-      setSg(await api.subgraph({ repo, qname: qname.trim(), depth }));
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+    void load(repo, qname.trim(), depth);
   }
 
-  const flow = useMemo(() => (sg ? layoutSubgraph(sg) : { nodes: [], edges: [] }), [sg]);
+  const flow = useMemo(
+    () => (sg ? layoutSubgraph(sg) : { nodes: [], edges: [] }),
+    [sg],
+  );
 
   return (
     <div className="space-y-4">
@@ -108,30 +160,54 @@ export default function GraphPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Graph viewer</h1>
         <p className="text-slate-400 mt-1 text-sm">
           Subgraph around a chosen qname. Up to 3 hops; capped per layer.
+          The default shows the most-called function in the repo — type to filter.
         </p>
       </header>
 
-      <form onSubmit={load} className="rounded-lg border border-slate-800 bg-slate-900/40 p-4 grid grid-cols-[200px_1fr_120px_auto] gap-3 items-end">
+      <form
+        onSubmit={onSubmit}
+        className="rounded-lg border border-slate-800 bg-slate-900/40 p-4 grid grid-cols-[200px_1fr_120px_auto] gap-3 items-end"
+      >
         <label className="block text-sm">
           <span className="text-slate-400">Repo</span>
           <select
             value={repo}
-            onChange={(e) => setRepo(e.target.value)}
+            onChange={(e) => {
+              // Don't clear qname here — the repo-change useEffect will set
+              // it to the new top suggestion. Clearing first causes a flicker.
+              setRepo(e.target.value);
+              setSg(null);
+            }}
             className="mt-1 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm"
           >
             {repos.map((r) => (
-              <option key={r.name} value={r.name}>{r.name}</option>
+              <option key={r.name} value={r.name}>
+                {r.name}
+              </option>
             ))}
           </select>
         </label>
         <label className="block text-sm">
-          <span className="text-slate-400">qname</span>
+          <span className="text-slate-400">
+            qname{' '}
+            <span className="text-slate-600">
+              (pick from list — sorted by fan-in)
+            </span>
+          </span>
           <input
+            list="qname-suggestions"
             value={qname}
             onChange={(e) => setQname(e.target.value)}
-            placeholder="apps.api.src.architect.ingest.pipeline.run_ingest"
+            placeholder="start typing or pick from the dropdown…"
             className="mt-1 w-full rounded bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm font-mono"
           />
+          <datalist id="qname-suggestions">
+            {suggestions.map((s) => (
+              <option key={s.qname} value={s.qname}>
+                {s.label} · {s.callers} caller{s.callers === 1 ? '' : 's'}
+              </option>
+            ))}
+          </datalist>
         </label>
         <label className="block text-sm">
           <span className="text-slate-400">Depth</span>
@@ -154,6 +230,28 @@ export default function GraphPage() {
         </button>
       </form>
 
+      {suggestions.length > 0 && (
+        <div className="text-xs text-slate-500">
+          Top callees:{' '}
+          {suggestions.slice(0, 5).map((s, i) => (
+            <span key={s.qname}>
+              <button
+                type="button"
+                className="font-mono hover:text-emerald-400 hover:underline"
+                onClick={() => {
+                  setQname(s.qname);
+                  void load(repo, s.qname, depth);
+                }}
+              >
+                {s.qname.split(/\.|::/).pop()}
+              </button>
+              <span className="text-slate-700">({s.callers})</span>
+              {i < 4 && i < suggestions.length - 1 ? ' · ' : ''}
+            </span>
+          ))}
+        </div>
+      )}
+
       {error && (
         <div className="rounded-lg border border-red-900/60 bg-red-950/30 p-4 text-sm text-red-300">
           {error}
@@ -170,7 +268,8 @@ export default function GraphPage() {
       {sg && (
         <p className="text-xs text-slate-500">
           {sg.nodes.length} nodes, {sg.edges.length} edges around{' '}
-          <span className="font-mono text-slate-300">{sg.qname}</span> at depth {sg.depth}.
+          <span className="font-mono text-slate-300">{sg.qname}</span> at depth{' '}
+          {sg.depth}.
         </p>
       )}
     </div>

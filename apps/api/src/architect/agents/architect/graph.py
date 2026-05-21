@@ -28,11 +28,11 @@ from psycopg_pool import AsyncConnectionPool
 
 from architect.agents.architect.schemas import (
     ArchitectureProposal,
-    NfrConcern,
-    ProposedEndpoint,
+    EndpointsList,
+    NfrsList,
     ProposedGraphDelta,
-    ProposedService,
-    ProposedTable,
+    ServicesList,
+    TablesList,
 )
 from architect.agents.common.checkpointer import get_checkpointer
 from architect.agents.common.llm import LLMClient
@@ -106,24 +106,20 @@ def build_architect_graph(client: LLMClient, settings: Settings, pool: AsyncConn
 
     async def propose_services(state: AgentState) -> dict[str, Any]:
         await client.check_budget()
-        model = client.make_model(agent="architect").with_structured_output(
-            list[ProposedService]
-        )
-        services = cast(
-            list[ProposedService],
+        model = client.make_model(agent="architect").with_structured_output(ServicesList)
+        result = cast(
+            ServicesList,
             await model.ainvoke([_SYS_SERVICES, *state.get("messages", [])]),
         )
         scratch = dict(state.get("scratch", {}))
-        scratch["services"] = [s.model_dump() for s in services]
+        scratch["services"] = [s.model_dump() for s in result.services]
         return {"scratch": scratch}
 
     async def design_data_model(state: AgentState) -> dict[str, Any]:
         await client.check_budget()
-        model = client.make_model(agent="architect").with_structured_output(
-            list[ProposedTable]
-        )
-        tables = cast(
-            list[ProposedTable],
+        model = client.make_model(agent="architect").with_structured_output(TablesList)
+        result = cast(
+            TablesList,
             await model.ainvoke(
                 [
                     _SYS_TABLES,
@@ -133,16 +129,14 @@ def build_architect_graph(client: LLMClient, settings: Settings, pool: AsyncConn
             ),
         )
         scratch = dict(state.get("scratch", {}))
-        scratch["tables"] = [t.model_dump() for t in tables]
+        scratch["tables"] = [t.model_dump() for t in result.tables]
         return {"scratch": scratch}
 
     async def design_apis(state: AgentState) -> dict[str, Any]:
         await client.check_budget()
-        model = client.make_model(agent="architect").with_structured_output(
-            list[ProposedEndpoint]
-        )
-        endpoints = cast(
-            list[ProposedEndpoint],
+        model = client.make_model(agent="architect").with_structured_output(EndpointsList)
+        result = cast(
+            EndpointsList,
             await model.ainvoke(
                 [
                     _SYS_APIS,
@@ -152,20 +146,18 @@ def build_architect_graph(client: LLMClient, settings: Settings, pool: AsyncConn
             ),
         )
         scratch = dict(state.get("scratch", {}))
-        scratch["endpoints"] = [e.model_dump() for e in endpoints]
+        scratch["endpoints"] = [e.model_dump() for e in result.endpoints]
         return {"scratch": scratch}
 
     async def nfr_pass(state: AgentState) -> dict[str, Any]:
         await client.check_budget()
-        model = client.make_model(agent="architect").with_structured_output(
-            list[NfrConcern]
-        )
-        nfrs = cast(
-            list[NfrConcern],
+        model = client.make_model(agent="architect").with_structured_output(NfrsList)
+        result = cast(
+            NfrsList,
             await model.ainvoke([_SYS_NFRS, *state.get("messages", [])]),
         )
         scratch = dict(state.get("scratch", {}))
-        scratch["nfrs"] = [n.model_dump() for n in nfrs]
+        scratch["nfrs"] = [n.model_dump() for n in result.nfrs]
         return {"scratch": scratch}
 
     async def synthesize(state: AgentState) -> dict[str, Any]:
@@ -237,34 +229,27 @@ async def _stage_delta(
 ) -> None:
     """Translate a ProposedGraphDelta into decision_log rows."""
     for node in delta.nodes:
-        label = node.get("label")
-        qname = node.get("qname")
-        if not label or not qname:
-            continue
         await propose_node(
             pool=pool,
             agent="architect",
             thread_id=thread_id,
             repo=repo,
-            label=label,
-            qname=qname,
-            props=node.get("props", {}),
+            label=node.label,
+            qname=node.qname,
+            props={"notes": node.notes} if node.notes else {},
         )
     for edge in delta.edges:
-        from_q = edge.get("from_qname")
-        to_q = edge.get("to_qname")
-        rel = edge.get("rel_type")
-        if not (from_q and to_q and rel):
-            continue
+        # All three fields are now required (min_length=1 + Literal) at the
+        # Pydantic layer, so no nullness guards needed here.
         await propose_edge(
             pool=pool,
             agent="architect",
             thread_id=thread_id,
             repo=repo,
-            from_qname=from_q,
-            to_qname=to_q,
-            rel_type=rel,
-            props=edge.get("props", {}),
+            from_qname=edge.from_qname,
+            to_qname=edge.to_qname,
+            rel_type=edge.rel_type,
+            props={"notes": edge.notes} if edge.notes else {},
         )
 
 

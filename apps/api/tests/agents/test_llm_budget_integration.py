@@ -71,15 +71,23 @@ async def test_budget_check_passes_when_under_limit(pool: AsyncConnectionPool) -
 
 
 async def test_budget_check_raises_when_at_limit(pool: AsyncConnectionPool) -> None:
-    settings = Settings(daily_cost_limit_usd=2.0)
+    # Configure a generous-enough limit + insert a single row that puts the
+    # day OVER, regardless of what other 'real' rows already exist. Using a
+    # tiny limit relative to a tagged dummy row keeps the assertion robust
+    # against a populated cost_log from earlier agent runs.
+    settings = Settings(daily_cost_limit_usd=0.01)
     client = LLMClient(settings, pool)
     async with pool.connection() as conn, conn.cursor() as cur:
         await cur.execute(
-            "INSERT INTO cost_log (component, model, cost_usd) VALUES ('test', 'm', 2.50)",
+            "INSERT INTO cost_log (component, model, cost_usd) VALUES ('test', 'm', 1.00)",
         )
     with pytest.raises(BudgetExceededError) as exc:
         await client.check_budget()
-    assert "2.50" in str(exc.value) or "2.5" in str(exc.value)
+    # Don't hardcode the spend value — it depends on what else is in cost_log.
+    # Assert the exception names the limit and refers to the ceiling concept.
+    msg = str(exc.value)
+    assert "DAILY_COST_LIMIT_USD" in msg
+    assert "0.01" in msg
 
 
 async def test_metering_callback_writes_cost_log(pool: AsyncConnectionPool) -> None:

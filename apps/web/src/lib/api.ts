@@ -61,6 +61,12 @@ export type Subgraph = {
   edges: GraphEdge[];
 };
 
+export type QnameSuggestion = {
+  qname: string;
+  label: string;
+  callers: number;
+};
+
 export type ReviewFinding = {
   severity: 'critical' | 'important' | 'advisory';
   rule: string;
@@ -175,6 +181,12 @@ export const api = {
     request<Subgraph>(
       `/graph/subgraph?repo=${encodeURIComponent(params.repo)}&qname=${encodeURIComponent(params.qname)}&depth=${params.depth ?? 1}`,
     ),
+  qnames: (params: { repo: string; q?: string; limit?: number }) => {
+    const qs = new URLSearchParams({ repo: params.repo });
+    if (params.q) qs.set('q', params.q);
+    if (params.limit) qs.set('limit', String(params.limit));
+    return request<QnameSuggestion[]>(`/graph/qnames?${qs.toString()}`);
+  },
 
   echo: (body: { message: string; thread_id?: string }) =>
     request<EchoResponse>('/agents/echo', { method: 'POST', body: JSON.stringify(body) }),

@@ -83,3 +83,44 @@ async def repos() -> list[RepoSummary]:
         )
         rows = await result.data()
     return [RepoSummary(**r) for r in rows]
+
+
+class QnameSuggestion(BaseModel):
+    qname: str
+    label: str
+    callers: int
+
+
+@router.get("/qnames", response_model=list[QnameSuggestion])
+async def qnames(
+    repo: str = Query(...),
+    q: str = Query("", description="Substring filter, case-insensitive."),
+    limit: int = Query(40, ge=1, le=200),
+) -> list[QnameSuggestion]:
+    """Top Function / Class qnames in `repo` matching `q`, sorted by fan-in.
+
+    Powers the Graph viewer's autocomplete + default-qname picker so users
+    don't need to know the qname convention to see something useful.
+    """
+    async with graph_client.session() as s:
+        result = await s.run(
+            """
+            MATCH (n {repo: $repo})
+            WHERE (n:Function OR n:Class)
+              AND ($q = '' OR toLower(n.qname) CONTAINS toLower($q))
+              AND NOT n.qname STARTS WITH 'external::'
+            OPTIONAL MATCH (c)-[:CALLS]->(n)
+            WITH n, count(c) AS callers
+            RETURN n.qname AS qname, labels(n)[0] AS label, callers
+            ORDER BY callers DESC, n.qname
+            LIMIT $limit
+            """,
+            repo=repo,
+            q=q,
+            limit=limit,
+        )
+        rows = await result.data()
+    return [
+        QnameSuggestion(qname=r["qname"], label=r["label"], callers=r["callers"])
+        for r in rows
+    ]

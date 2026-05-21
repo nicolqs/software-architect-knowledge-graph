@@ -7,7 +7,7 @@ writer to stage as graph deltas.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -58,17 +58,31 @@ class NfrConcern(BaseModel):
     mitigation: str
 
 
+class ProposedNodeDelta(BaseModel):
+    """A new node to stage into the graph (via decision_log)."""
+
+    label: Literal["Service", "API", "DBTable", "Feature", "InfraComponent"]
+    # `min_length=1` is load-bearing — without it, an LLM that returns an
+    # empty string would land an empty-qname proposal in decision_log and
+    # (if approved with apply_now) create a `:Service {qname: ""}` node.
+    qname: str = Field(..., min_length=1, max_length=400, description="Unique name within the repo's graph.")
+    notes: str = Field("", max_length=400, description="One-line rationale (optional).")
+
+
+class ProposedEdgeDelta(BaseModel):
+    """A new edge to stage into the graph (via decision_log)."""
+
+    from_qname: str = Field(..., min_length=1, max_length=400)
+    to_qname: str = Field(..., min_length=1, max_length=400)
+    rel_type: Literal["DEPENDS_ON", "OWNS", "WRITES_TO", "READS_FROM", "DEPLOYED_ON"]
+    notes: str = Field("", max_length=400, description="One-line rationale (optional).")
+
+
 class ProposedGraphDelta(BaseModel):
     """The list of graph mutations to stage in decision_log."""
 
-    nodes: list[dict[str, Any]] = Field(
-        default_factory=list,
-        description="Each dict: {label, qname, props}. Label ∈ {Service, API, DBTable, InfraComponent, Feature}.",
-    )
-    edges: list[dict[str, Any]] = Field(
-        default_factory=list,
-        description="Each dict: {from_qname, to_qname, rel_type, props}. rel_type ∈ {DEPENDS_ON, OWNS, WRITES_TO, READS_FROM}.",
-    )
+    nodes: list[ProposedNodeDelta] = Field(default_factory=list)
+    edges: list[ProposedEdgeDelta] = Field(default_factory=list)
 
 
 class ArchitectureProposal(BaseModel):
@@ -80,3 +94,25 @@ class ArchitectureProposal(BaseModel):
     nfrs: list[NfrConcern]
     markdown: str = Field(..., description="The architecture document, ready to paste into a PR or RFC.")
     graph_delta: ProposedGraphDelta
+
+
+# ---- Per-node wrappers for `with_structured_output` -------------------
+# OpenAI's structured-output mode requires a top-level BaseModel class;
+# raw `list[X]` types are rejected. langchain-anthropic was permissive
+# about this, hiding the requirement until we switched providers.
+
+
+class ServicesList(BaseModel):
+    services: list[ProposedService]
+
+
+class TablesList(BaseModel):
+    tables: list[ProposedTable]
+
+
+class EndpointsList(BaseModel):
+    endpoints: list[ProposedEndpoint]
+
+
+class NfrsList(BaseModel):
+    nfrs: list[NfrConcern]
